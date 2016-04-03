@@ -1,0 +1,176 @@
+---
+title       : Noise Free Gaussian Process Regression Visualisation
+subtitle    : 
+author      : Brice Hoareau
+job         : 
+logo        : CroppedCapture.png
+framework   : io2012        # {io2012, html5slides, shower, dzslides, ...}
+highlighter : highlight.js  # {highlight.js, prettify, highlight}
+hitheme     : tomorrow      # 
+widgets     : [mathjax]     # {mathjax, quiz, bootstrap}
+mode        : selfcontained # {standalone, draft}
+knit        : slidify::knit2slides
+---
+
+## Intuition
+
+$Gaussian$ $Process$ models constitute a class of probabilistic statistical models in which a Gaussian process (GP) is used to describe the Bayesian a priori uncertainty about a latent function.
+
+GPs capture our belief that a lot of functions in the world are smooth. Looking at the data acquired from the world (e.g. images, sounds), indeed smoothness is a reasonable assumption.
+
+Starting with our ($Prior$) knowledge of a function (i.e. its mean and the kernel we've chosen), GP regression allows us to improve on this knowledge by adding data points to the prior to calculate the new expected function and its uncertainty. This improved understanding is the $Posterior$.
+
+Adding data collapses the uncertainty of the function at the points. Where you have data you should be confident, where you don't have data you shouldn't be confident. Where you don't have data you should only believe your prior knowledge, where you do have data you should believe the data.
+
+--- 
+
+## Basic Formulation
+
+Given $\bar x$, the input, we would like to model $\bar f$, the output of a process. We assume that $\bar f$ will be modelled with a (multivariate) Gaussian distribution. Specifically,
+$\bar f \sim \mathscr N(\bar 0, K(\bar x,\bar x))$ where $K$ is a matrix with elements that are measures of similarity between each element of $\bar x$. The measure of similarity chosen in this visualisation is the _squared exponential_ kernel:
+
+$$\kappa(x_i,x_j) = e^{(-\frac{\alpha}{2} (x_i-x_j)^2)}$$
+    
+This kernel has the following properties:
+
+- if the points are close to each other then $\kappa$ tends to 1
+- if the points are far from each other then $\kappa$ tends to 0 (how "quickly" $\kappa$ reaches 0 is controlled by $\alpha$)
+
+GP gives us a distribution over functions: $\bar f(\bar x) \sim GP(\mu(\bar x),K(\bar x,\bar x))$
+
+---
+
+## Prior and Posterior Plots
+
+```{r echo=FALSE, fig.width=13, fig.height=7}
+# Load required libraries
+library(ggplot2)
+library(reshape2)
+library(MASS)
+library(grid)
+
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+# Set random number generator seed for reproducibility
+set.seed(121)
+
+# Define input (x) range
+GP.prior.input <- data.frame(x = seq(-3, 3, 0.1))
+
+# Define Kernel function
+GP.calc.sigma <- function(x, y, alpha = 1){
+    # Create covariance matrix
+    sigma <- data.frame(matrix(0, ncol = length(y), nrow = length(x)))
+    
+    # Calculate covariance values based on kernel equation
+    for(i in 1:length(x)){
+        for(j in 1:length(y)){
+            sigma[i, j] <- exp(-alpha * .5 * (x[i] - y[j]) * (x[i] - y[j]))
+        }
+    }
+    return(sigma)
+}
+
+# ****** Generate Prior Visualisation ******
+# Calculate the prior's covariance matrix
+GP.prior.K <- GP.calc.sigma(GP.prior.input$x, GP.prior.input$x)
+
+# Using mvrnorm
+GP.prior <- GP.prior.input
+
+for(i in 1:15){
+    GP.prior.output <- mvrnorm(1, rep(0, nrow(GP.prior.input)), GP.prior.K)
+    GP.prior[paste("f",i, sep = "")] <- GP.prior.output
+}
+
+# Shape data for visualisation
+GP.prior.vis <- melt(GP.prior, id="x")
+
+# Visualise GP prior
+g.prior <- ggplot(data = GP.prior.vis, aes(x = x, y = value))
+g.prior <- g.prior + geom_line(aes(group=variable), colour="grey80")
+g.prior <- g.prior + theme_bw() + xlab("x") + ylab("f(x)")
+g.prior <- g.prior + geom_line(data=data.frame(x = c(-3,3), y = c(0,0)),
+                   aes(x=x,y=y),
+                   colour="blue",
+                   size=1)
+
+# ****** Generate Posterior Visualisation ******
+# Define training data frame
+f <- data.frame(x=c(-1,-1.3,0,2),
+                y=c(1,1.5,-1,0.75))
+
+# Perform regression
+x <- f$x
+k.xx <- data.matrix(GP.calc.sigma(x,x))
+k.xxs <- data.matrix(GP.calc.sigma(x,GP.prior.input$x))
+k.xsx <- data.matrix(GP.calc.sigma(GP.prior.input$x,x))
+#k.xsxs <- data.matrix(GP.calc.sigma(GP.prior.input$x,GP.prior.input$x))
+k.xsxs <- data.matrix(GP.prior.K)
+
+f.star.bar <- k.xsx %*% solve(k.xx) %*% f$y
+cov.f.star <- k.xsxs - k.xsx %*% solve(k.xx) %*% k.xxs
+
+# Using mvrnorm
+GP.posterior <- GP.prior.input
+
+for(i in 1:15){
+    GP.posterior.output <- mvrnorm(1, f.star.bar, cov.f.star)
+    GP.posterior[paste("f",i, sep = "")] <- GP.posterior.output
+}
+
+# Shape data for visualisation
+GP.posterior.vis <- melt(GP.posterior, id="x")
+
+# Visualise GP posterior
+g.post <- ggplot(data = GP.posterior.vis, aes(x = x, y = value))
+g.post <- g.post + geom_line(aes(group=variable), colour="grey80")
+g.post <- g.post + theme_bw() + xlab("x") + ylab("f(x)")
+g.post <- g.post + geom_line(data=data.frame(x = GP.posterior$x, y = f.star.bar),
+                   aes(x=x,y=y),
+                   colour="blue",
+                   size=1)
+g.post <- g.post + geom_point(data=f,aes(x=x,y=y))
+
+multiplot(g.prior, g.post, cols=2)
+```
+
+---
+
+## Gaussian process regression without observational noise
+
+The plot on the left shows a GP prior with zero mean $\mu(\bar x) = 0$ and covariance function  $$\kappa(x_i,x_j) = e^{(-\frac{1}{2} (x_i-x_j)^2)}$$The blue line describes the mean function of $\bar f(\bar x)$. The fifteen grey lines are sample paths from the Gaussian process.
+
+The plot on the right shows the posterior Gaussian process which is obtained by conditioning the prior on the four observations depicted as points. The predictive uncertainty is zero at the locations where the function value has been observed. Between the observations the uncertainty about the function value grows and the sampled functions represent valid hypothesis about f under the posterior process.
